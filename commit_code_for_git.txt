@@ -1,0 +1,176 @@
+If the branch is pointing to main, and the user selects the branchName param as "main" in req body then this code will work fine.
+If the branch is pointing to test and I have made changes to file in test branch, and user selects the branchName as "main", then as this checkout to main brnach the pusing fails. As it again pushes the same main branch file to github which is already same(not modified).
+
+// 🔹 Commit & Push Changes
+app.post("/commit-push", async (req, res) => {
+    const { repoName, branchName, commitMessage } = req.body;
+    if (!repoName || !branchName || !commitMessage) {
+        return res.status(400).json({ success: false, message: "Missing parameters!" });
+    }
+
+    try {
+        const repoPath = getRepoPath(repoName);
+        const gitRepo = simpleGit(repoPath);
+
+        // ✅ Check for uncommitted changes
+        const status = await gitRepo.status();
+        if (!status.isClean()) {
+            console.log("🟡 Uncommitted changes found. Stashing...");
+            await gitRepo.add(["-A"]); // Stage all changes
+            await gitRepo.commit(commitMessage); // Commit changes
+        }
+
+        // ✅ Ensure correct branch before pushing
+        console.log(`🟢 Switching to branch: ${branchName}`);
+        await gitRepo.checkout(branchName);
+
+        // ✅ Pull latest changes
+        try {
+            await gitRepo.pull("origin", branchName);
+        } catch (pullError) {
+            console.error("Pull error:", pullError);
+            return res.status(500).json({ success: false, error: "Failed to pull latest changes. Resolve conflicts before pushing." });
+        }
+
+        // ✅ Push changes
+        console.log("🚀 Pushing to branch:", branchName);
+        await gitRepo.push("origin", branchName);
+
+        res.json({ success: true, message: `Changes committed and pushed to '${branchName}'!` });
+
+    } catch (error) {
+        console.error("Error committing and pushing:", error);
+        res.status(500).json({ success: false, error: "Failed to commit and push changes." });
+    }
+});
+
+
+
+
+This is a code, with no branchName in params, so it pushes the chngaes to the branch which it is pointing to
+
+// 🔹 Commit & Push Changes (uses HEAD branch)
+app.post("/commit-push", async (req, res) => {
+    const { repoName, commitMessage } = req.body;
+    if (!repoName || !commitMessage) {
+        return res.status(400).json({ success: false, message: "Repository name and commit message are required." });
+    }
+
+    try {
+        const repoPath = getRepoPath(repoName);
+        const gitRepo = simpleGit(repoPath);
+
+        // ✅ Detect current branch (HEAD)
+        const currentBranch = (await gitRepo.branchLocal()).current;
+        console.log(`🟢 Current HEAD branch: ${currentBranch}`);
+
+        // ✅ Check for uncommitted changes
+        const status = await gitRepo.status();
+        if (!status.isClean()) {
+            console.log("🟡 Uncommitted changes found. Committing...");
+            await gitRepo.add(["-A"]);
+            await gitRepo.commit(commitMessage);
+        } else {
+            console.log("✅ No uncommitted changes to commit.");
+        }
+
+        // ✅ Pull latest changes from current branch
+        try {
+            console.log("🔄 Pulling latest changes...");
+            await gitRepo.pull("origin", currentBranch);
+        } catch (pullError) {
+            console.error("❌ Pull error:", pullError);
+            return res.status(500).json({ success: false, error: "Failed to pull latest changes. Resolve conflicts before pushing." });
+        }
+
+        // ✅ Push changes
+        console.log(`🚀 Pushing to branch: ${currentBranch}`);
+        await gitRepo.push("origin", currentBranch);
+
+        res.json({ success: true, message: `Changes committed and pushed to '${currentBranch}'!` });
+
+    } catch (error) {
+        console.error("❌ Error committing and pushing:", error);
+        res.status(500).json({ success: false, error: "Failed to commit and push changes." });
+    }
+});
+
+
+
+This switch is working well as of 09 apr
+// 🔹 Switch to an Existing Branch
+app.post("/switch-branch", async (req, res) => {
+    const { repoName, branchName } = req.body;
+    if (!repoName || !branchName) {
+        return res.status(400).json({ success: false, message: "Repository name and branch name are required." });
+    }
+
+    try {
+        const repoPath = getRepoPath(repoName);
+        const gitRepo = simpleGit(repoPath);
+
+        console.log(`🟢 Switching to branch: ${branchName}`);
+
+        // ✅ Checkout the branch
+        await gitRepo.checkout(branchName);
+
+        // ✅ Ensure it tracks the correct remote branch if it exists
+        const branchSummary = await gitRepo.branch(["-a"]);
+        const remoteBranchExists = branchSummary.all.includes(`remotes/origin/${branchName}`);
+
+        if (remoteBranchExists) {
+            await gitRepo.branch(["--set-upstream-to=origin/" + branchName, branchName]);
+            await gitRepo.pull("origin", branchName); // Ensure latest changes
+        }
+
+        res.json({ success: true, message: `Switched to branch '${branchName}'.` });
+    } catch (error) {
+        console.error("❌ Error switching branch:", error);
+        res.status(500).json({ success: false, error: "Failed to switch branch." });
+    }
+});
+
+
+/add-repo api using github apis
+
+
+app.post("/add-repo", async (req, res) => {
+    const { repoUrl } = req.body;
+    if (!repoUrl) return res.status(400).json({ success: false, message: "Repository URL is required." });
+
+    const repoParts = repoUrl.replace("https://github.com/", "").split("/");
+    if (repoParts.length < 2) {
+        return res.status(400).json({ success: false, message: "Invalid GitHub repository URL." });
+    }
+
+    const owner = repoParts[0];
+    const repoName = repoParts[1].replace(".git", "");
+
+    try {
+        // 🔹 Fetch repository metadata from GitHub API
+        const repoResponse = await axios.get(`https://api.github.com/repos/${owner}/${repoName}`, {
+            headers: { Authorization: `token ${GITHUB_TOKEN}` },
+        });
+
+        // 🔹 Fetch repository files (tree structure)
+        const repoContents = await axios.get(`https://api.github.com/repos/${owner}/${repoName}/contents`, {
+            headers: { Authorization: `token ${GITHUB_TOKEN}` },
+        });
+
+        // 🔹 Format response (no local storage!)
+        res.json({
+            success: true,
+            message: "Repository accessed successfully.",
+            repoMetadata: repoResponse.data,
+            repoContents: repoContents.data.map(file => ({
+                name: file.name,
+                path: file.path,
+                type: file.type,
+                download_url: file.download_url
+            }))
+        });
+    } catch (error) {
+        console.error("Error accessing repository:", error);
+        res.status(500).json({ success: false, error: "Failed to access repository." });
+    }
+});
