@@ -1,5 +1,7 @@
+Making this chnages in GitHub
 If the branch is pointing to main, and the user selects the branchName param as "main" in req body then this code will work fine.
 If the branch is pointing to test and I have made changes to file in test branch, and user selects the branchName as "main", then as this checkout to main brnach the pusing fails. As it again pushes the same main branch file to github which is already same(not modified).
+This is also a change that you have to see
 
 // 🔹 Commit & Push Changes
 app.post("/commit-push", async (req, res) => {
